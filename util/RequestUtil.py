@@ -74,7 +74,26 @@ def get_message(start, count):
 def get_login_user_info():
     response = requests.get('https://r.qzone.qq.com/fcg-bin/cgi_get_portrait.fcg?g_tk=' + str(g_tk) + '&uins=' + uin,
                             headers=headers, cookies=cookies)
-    info = response.content.decode('GBK')
+    # 尝试多种编码方式解码
+    info = None
+    encodings_to_try = ['gbk', 'gb2312', 'gb18030', 'utf-8', 'big5']
+    
+    for encoding in encodings_to_try:
+        try:
+            info = response.content.decode(encoding)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # 如果所有编码都失败，使用错误处理策略
+    if info is None:
+        try:
+            info = response.content.decode('gbk', errors='replace')
+            print("警告：使用GBK替换模式解码用户信息，可能丢失部分字符信息")
+        except:
+            print("严重错误：无法解码用户信息响应内容")
+            return None
+    
     info = info.strip().lstrip('portraitCallBack(').rstrip(');')
     info = json.loads(info)
     return info
