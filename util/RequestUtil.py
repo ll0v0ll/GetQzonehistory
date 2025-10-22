@@ -5,6 +5,10 @@ import util.LoginUtil as Login
 import requests
 import json
 from fake_useragent import UserAgent
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import urllib3
 
 ua = UserAgent()
 # 登陆后获取到的cookies
@@ -13,6 +17,31 @@ cookies = Login.cookie()
 g_tk = Login.bkn(cookies.get('p_skey'))
 # 获取uin
 uin = re.sub(r'o0*', '', cookies.get('uin'))
+
+# 禁用SSL警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 创建自定义SSL上下文
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+# 创建session并配置重试策略
+session = requests.Session()
+
+# 配置重试策略
+retry_strategy = Retry(
+    total=3,  # 总重试次数
+    backoff_factor=1,  # 重试间隔时间因子
+    status_forcelist=[429, 500, 502, 503, 504],  # 需要重试的HTTP状态码
+    allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+)
+
+# 创建HTTP适配器
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
 # 全局header
 headers = {
     'authority': 'user.qzone.qq.com',
@@ -56,24 +85,47 @@ def get_message(start, count):
     }
 
     try:
-        response = requests.get(
+        response = session.get(
             'https://user.qzone.qq.com/proxy/domain/ic2.qzone.qq.com/cgi-bin/feeds/feeds2_html_pav_all',
             params=params,
             cookies=cookies,
             headers=headers,
-            timeout=(5, 10)  # 设置连接超时为5秒，读取超时为10秒
+            timeout=(10, 30),  # 增加超时时间
+            verify=False,  # 禁用SSL验证
+            stream=False
         )
-        time.sleep(5)
-    except requests.Timeout:
-        print("请求超时")
+        time.sleep(0.2)  # 进一步减少等待时间
+    except (requests.Timeout, requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+        print(f"请求发生异常: {e}")
+        # 尝试使用更宽松的SSL设置重试
+        try:
+            response = session.get(
+                'https://user.qzone.qq.com/proxy/domain/ic2.qzone.qq.com/cgi-bin/feeds/feeds2_html_pav_all',
+                params=params,
+                cookies=cookies,
+                headers=headers,
+                timeout=(15, 45),
+                verify=False,
+                stream=False
+            )
+            time.sleep(0.2)
+        except Exception as retry_e:
+            print(f"重试请求也失败: {retry_e}")
+            return None
+    except Exception as e:
+        print(f"请求发生未知异常: {e}")
         return None
 
     return response
 
 
 def get_login_user_info():
-    response = requests.get('https://r.qzone.qq.com/fcg-bin/cgi_get_portrait.fcg?g_tk=' + str(g_tk) + '&uins=' + uin,
-                            headers=headers, cookies=cookies)
+    try:
+        response = session.get('https://r.qzone.qq.com/fcg-bin/cgi_get_portrait.fcg?g_tk=' + str(g_tk) + '&uins=' + uin,
+                              headers=headers, cookies=cookies, verify=False, timeout=(10, 30))
+    except Exception as e:
+        print(f"获取用户信息失败: {e}")
+        return None
     # 尝试多种编码方式解码
     info = None
     encodings_to_try = ['gbk', 'gb2312', 'gb18030', 'utf-8', 'big5']

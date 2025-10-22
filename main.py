@@ -17,6 +17,8 @@ import platform
 import chardet
 import sys
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 texts = list()
@@ -26,6 +28,82 @@ user_message = list()
 leave_message = list()
 forward_message = list()
 
+# 线程安全锁
+texts_lock = threading.Lock()
+friends_lock = threading.Lock()
+
+
+# 并发处理单个批次的消息
+def process_batch_messages(batch_data):
+    """处理单个批次的消息数据"""
+    batch_texts = []
+    batch_friends = []
+    
+    try:
+        i, content_bytes = batch_data
+        
+        # 尝试多种编码方式解码
+        message = None
+        encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'big5']
+        
+        # 首先尝试chardet检测
+        try:
+            detected_encoding = chardet.detect(content_bytes)['encoding']
+            if detected_encoding:
+                encodings_to_try.insert(0, detected_encoding)
+        except:
+            pass
+        
+        # 尝试各种编码
+        for encoding in encodings_to_try:
+            try:
+                message = content_bytes.decode(encoding)
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        
+        # 如果所有编码都失败，使用错误处理策略
+        if message is None:
+            try:
+                message = content_bytes.decode('utf-8', errors='replace')
+            except:
+                return batch_texts, batch_friends
+
+        # 处理HTML数据
+        html = Tools.process_old_html(message)
+        if "li" not in html:
+            return batch_texts, batch_friends
+            
+        soup = BeautifulSoup(html, 'html.parser')
+
+        for element in soup.find_all('li', class_='f-single f-s-s'):
+            put_time = None
+            text = None
+            img = None
+            friend_element = element.find('a', class_='f-name q_namecard')
+            
+            # 获取好友昵称和QQ
+            if friend_element is not None:
+                friend_name = friend_element.get_text()
+                friend_qq = friend_element.get('link')[9:]
+                friend_link = friend_element.get('href')
+                batch_friends.append([friend_name, friend_qq, friend_link])
+
+            time_element = element.find('div', class_='info-detail')
+            text_element = element.find('p', class_='txt-box-title ellipsis-one')
+            img_element = element.find('a', class_='img-item')
+            
+            if time_element is not None and text_element is not None:
+                put_time = time_element.get_text().replace('\xa0', ' ')
+                text = text_element.get_text().replace('\xa0', ' ')
+                if img_element is not None:
+                    img = img_element.find('img').get('src')
+                batch_texts.append([put_time, text, img])
+                
+    except Exception as e:
+        print(f"处理批次 {batch_data[0]} 时发生异常: {e}")
+    
+    return batch_texts, batch_friends
 
 # 信号处理函数
 def signal_handler(signal, frame):
@@ -125,6 +203,35 @@ def render_html(shuoshuo_path, zhuanfa_path):
         f.write(final_html)
 
 
+# 并发下载单个图片
+def download_single_image(args):
+    """下载单个图片的函数"""
+    item_pic_link, item_text, pic_save_path = args
+    
+    if not item_pic_link or len(item_pic_link) == 0 or 'http' not in item_pic_link:
+        return None
+    
+    try:
+        # 去除非法字符 / Emoji表情
+        pic_name = re.sub(r'\[em\].*?\[/em\]|[^\w\s]|[\\/:*?"<>|\r\n]+', '_', item_text).replace(" ", "") + '.jpg'
+        # 去除文件名中的空格
+        pic_name = pic_name.replace(' ', '')
+        # 限制文件名长度
+        if len(pic_name) > 40:
+            pic_name = pic_name[:40] + '.jpg'
+        
+        response = requests.get(item_pic_link, verify=False, timeout=(10, 30))
+        if response.status_code == 200:
+            # 防止图片重名
+            if os.path.exists(pic_save_path + pic_name):
+                pic_name = pic_name.split('.')[0] + "_" + str(int(time.time())) + '.jpg'
+            with open(pic_save_path + pic_name, 'wb') as f:
+                f.write(response.content)
+            return pic_name
+    except Exception as e:
+        print(f"下载图片失败 {item_pic_link}: {e}")
+        return None
+
 # 保存数据
 def save_data():
     user_save_path = Config.result_path + Request.uin + '/'
@@ -140,29 +247,30 @@ def save_data():
         index=False)
     pd.DataFrame(all_friends, columns=['昵称', 'QQ', '空间主页']).to_excel(
         user_save_path + Request.uin + '_好友列表.xlsx', index=False)
-    for item in tqdm(texts, desc="处理消息列表", unit="item"):
+    
+    # 准备图片下载任务
+    image_download_tasks = []
+    for item in texts:
         item_text = item[1]
         # 可见说说中可能存在多张图片
         item_pic_links = str(item[2]).split(",")
         for item_pic_link in item_pic_links:
-            # 如果图片链接为空或者不是http链接，则跳过
-            if not item_pic_link or len(item_pic_link) == 0 or 'http' not in item_pic_link:
-                continue
-            # 去除非法字符 / Emoji表情
-            pic_name = re.sub(r'\[em\].*?\[/em\]|[^\w\s]|[\\/:*?"<>|\r\n]+', '_', item_text).replace(" ", "") + '.jpg'
-            # 去除文件名中的空格
-            pic_name = pic_name.replace(' ', '')
-            # 限制文件名长度
-            if len(pic_name) > 40:
-                pic_name = pic_name[:40] + '.jpg'
-            # pic_name = pic_name.split('：')[1] + '.jpg'
-            response = requests.get(item_pic_link)
-            if response.status_code == 200:
-                # 防止图片重名
-                if os.path.exists(pic_save_path + pic_name):
-                    pic_name = pic_name.split('.')[0] + "_" + str(int(time.time())) + '.jpg'
-                with open(pic_save_path + pic_name, 'wb') as f:
-                    f.write(response.content)
+            if item_pic_link and len(item_pic_link) > 0 and 'http' in item_pic_link:
+                image_download_tasks.append((item_pic_link, item_text, pic_save_path))
+    
+    # 并发下载图片
+    if image_download_tasks:
+        print(f"开始并发下载 {len(image_download_tasks)} 张图片...")
+        with ThreadPoolExecutor(max_workers=5) as executor:  # 限制并发数避免过载
+            for _ in tqdm(executor.map(download_single_image, image_download_tasks), 
+                         total=len(image_download_tasks), 
+                         desc="下载图片", 
+                         unit="张"):
+                pass
+    
+    # 分类处理消息
+    for item in texts:
+        item_text = item[1]
         if user_nickname in item_text:
             if '留言' in item_text:
                 leave_message.append(item[:-1])
@@ -241,75 +349,51 @@ if __name__ == '__main__':
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        for i in trange(int(count / 10) + 1, desc='Progress', unit='10条'):
-            # 每次获取10条数据
+        # 准备批次数据
+        batch_data_list = []
+        print("正在准备批次数据...")
+        
+        # 先获取所有批次的数据
+        for i in trange(int(count / 10) + 1, desc='获取数据批次', unit='批次'):
             response = Request.get_message(i * 10, 10)
             if response is None or not hasattr(response, 'content'):
                 print(f"获取消息失败：第 {i} 批次，返回值为空或无效")
                 continue
-            content_bytes = response.content
-            # 尝试多种编码方式解码，优先使用中文编码
-            message = None
-            encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'big5']
+            batch_data_list.append((i, response.content))
+            # 减少等待时间，提高并发效率
+            time.sleep(0.5)
+        
+        print(f"开始并发处理 {len(batch_data_list)} 个批次的数据...")
+        
+        # 使用线程池并发处理
+        max_workers = min(8, len(batch_data_list))  # 限制最大并发数
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_batch = {executor.submit(process_batch_messages, batch_data): batch_data 
+                              for batch_data in batch_data_list}
             
-            # 首先尝试chardet检测
-            try:
-                detected_encoding = chardet.detect(content_bytes)['encoding']
-                if detected_encoding:
-                    encodings_to_try.insert(0, detected_encoding)
-            except:
-                pass
-            
-            # 尝试各种编码
-            for encoding in encodings_to_try:
+            # 处理完成的任务
+            for future in tqdm(as_completed(future_to_batch), 
+                             total=len(batch_data_list), 
+                             desc='处理消息批次', 
+                             unit='批次'):
                 try:
-                    message = content_bytes.decode(encoding)
-                    break
-                except (UnicodeDecodeError, UnicodeError):
-                    continue
-            
-            # 如果所有编码都失败，使用错误处理策略
-            if message is None:
-                try:
-                    message = content_bytes.decode('utf-8', errors='replace')
-                    print(f"警告：使用UTF-8替换模式解码，可能丢失部分字符信息")
-                except:
-                    print(f"严重错误：无法解码响应内容")
-                    continue
-
-            # 处理HTML数据
-            html = Tools.process_old_html(message)
-            if "li" not in html:
-                continue
-            soup = BeautifulSoup(html, 'html.parser')
-
-            for element in soup.find_all('li', class_='f-single f-s-s'):
-                put_time = None
-                text = None
-                img = None
-                friend_element = element.find('a', class_='f-name q_namecard')
-                # 获取好友昵称和QQ
-                if friend_element is not None:
-                    friend_name = friend_element.get_text()
-                    friend_qq = friend_element.get('link')[9:]
-                    friend_link = friend_element.get('href')
-                    if friend_qq not in [sublist[1] for sublist in all_friends]:
-                        all_friends.append([friend_name, friend_qq, friend_link])
-
-                time_element = element.find('div', class_='info-detail')
-                text_element = element.find('p', class_='txt-box-title ellipsis-one')
-                img_element = element.find('a', class_='img-item')
-                if time_element is not None and text_element is not None:
-                    put_time = time_element.get_text().replace('\xa0', ' ')
-                    text = text_element.get_text().replace('\xa0', ' ')
-                    if img_element is not None:
-                        img = img_element.find('img').get('src')
-                    if text not in [sublist[1] for sublist in texts]:
-                        texts.append([put_time, text, img])
-
-            # 每读取10条后休息3秒
-            time.sleep(3)
-            print("Pause for 3 seconds...")
+                    batch_texts, batch_friends = future.result()
+                    
+                    # 线程安全地合并结果
+                    with texts_lock:
+                        for text_item in batch_texts:
+                            if text_item[1] not in [sublist[1] for sublist in texts]:
+                                texts.append(text_item)
+                    
+                    with friends_lock:
+                        for friend_item in batch_friends:
+                            if friend_item[1] not in [sublist[1] for sublist in all_friends]:
+                                all_friends.append(friend_item)
+                                
+                except Exception as e:
+                    batch_data = future_to_batch[future]
+                    print(f"处理批次 {batch_data[0]} 时发生异常: {e}")
 
     except Exception as e:
         print(f"获取QQ空间互动消息发生异常: {str(e)}")
