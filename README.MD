@@ -1,3 +1,18 @@
+# 快速开始
+
+> **直接下载运行（推荐）**
+>
+> 前往 [Releases](https://github.com/ll0v0ll/GetQzonehistory/releases) 页面下载对应系统的可执行文件，无需安装Python环境，双击即可运行。
+>
+> | 系统 | 文件 |
+> |------|------|
+> | Windows | `GetQzonehistory_win.exe` |
+> | macOS | `GetQzonehistory_mac` |
+> | Linux | `GetQzonehistory_linux` |
+>
+> Mac/Linux 用户需要先赋予执行权限：`chmod +x GetQzonehistory_mac`
+
+---
 
 # 工作原理与局限性
 
@@ -111,7 +126,6 @@ SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in vio
 
 
 
-
 ---
 # 以下是作者原始内容
 
@@ -147,7 +161,7 @@ project/
 ├── resource/                # 资源目录
 │   ├── config/              # 配置目录，文件保存位置配置
 │   │   └── config.ini
-│   ├── result/              # 导出结果的目录，格式为“你的qq.xlsx”
+│   ├── result/              # 导出结果的目录，格式为"你的qq.xlsx"
 │   │   ├── ...
 │   │   └── ...
 │   ├── temp/                # 缓存目录
@@ -209,6 +223,3 @@ python main.py
 
 
 ![Star History Chart](https://api.star-history.com/svg?repos=ll0v0ll%2Fgetqzonehistory&type=Date)
-
-
-
