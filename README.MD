@@ -172,31 +172,6 @@ python main.py
 [python-QQ空间扫码登录](https://blog.csdn.net/m0_50153253/article/details/113780595)
 
 
-SOLO Coder
-
-思考过程
-
-Star History 图表无法加载通常有以下原因：
-
-1. 仓库还没有 Star — 新仓库没有任何 star 时，图表为空白或无法渲染
-2. 服务尚未索引 — Star History 服务需要时间发现新仓库
-解决方案：
-
-您可以选择：
-
-方案一：暂时隐藏图表 （推荐）
-等仓库有了 star 之后再启用。我可以先注释掉这段代码。
-
-方案二：保持现状 推送后等待几天，当有人 star 后图表会自动显示。
-
-方案三：使用其他徽章 先添加一些其他常见徽章（如 License、GitHub stars 徽章），等有 star 后再加折线图。
-
-您希望我怎么处理？
-
-23:44
-用户4261938061
-
-
 ![Star History Chart](https://api.star-history.com/svg?repos=ll0v0ll%2Fgetqzonehistory&type=Date)
 
 
