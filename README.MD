@@ -171,3 +171,9 @@ python main.py
 登录方法参考自
 [python-QQ空间扫码登录](https://blog.csdn.net/m0_50153253/article/details/113780595)
 
+
+
+![Star History Chart](http://api.star-history.com/svg?repos=ll0v0ll%2Fgetqzonehistory&type=Date+null)
+
+
+
