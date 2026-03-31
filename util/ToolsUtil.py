@@ -54,9 +54,8 @@ def show_author_info():
 
     print(CYAN + author_art + RESET)
 
-    author_info = f"{YELLOW}bilibili{RESET} {BLUE}@高数带我飞{RESET} {YELLOW}GetQzonehistory V1.0{RESET}"
-    print(author_info)
-    print(f'{GREEN}Fork: https://github.com/ll0v0ll/GetQzonehistory{RESET}')
+    print(f'{YELLOW}原作者:{RESET} {BLUE}bilibili @高数带我飞{RESET}')
+    print(f'{GREEN}更新维护:{RESET} https://github.com/ll0v0ll/GetQzonehistory')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
