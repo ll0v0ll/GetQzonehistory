@@ -39,14 +39,6 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install zbar
 
-      - name: Download zbar DLL (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          curl -L -o zbar.zip https://github.com/NaturalHistoryMuseum/zbar-windows/releases/download/v0.10/zbar-0.10-win.zip
-          Expand-Archive -Path zbar.zip -DestinationPath zbar
-          Copy-Item "zbar/zbar/*.dll" -Destination "." -Force
-          Get-ChildItem -Path "." -Filter "*.dll" -Name
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -56,6 +48,9 @@ jobs:
       - name: Build with PyInstaller (Windows)
         if: matrix.os == 'windows-latest'
         run: |
+          $pyzbar_path = python -c "import pyzbar; import os; print(os.path.dirname(pyzbar.__file__))"
+          Copy-Item "$pyzbar_path\*.dll" .
+          Get-ChildItem -Path "." -Filter "*.dll" -Name
           pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource;resource" --add-binary "libzbar-64.dll;." main.py
 
       - name: Build with PyInstaller (Mac/Linux)
