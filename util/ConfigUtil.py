@@ -1,20 +1,8 @@
-import configparser
 import os
-import sys
 
-
-def get_resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
-
-
-config = configparser.ConfigParser()
-config.read(get_resource_path('resource/config/config.ini'), encoding='utf-8')
-
-temp_path = config.get('File', 'temp')
-user_path = config.get('File', 'user')
-result_path = config.get('File', 'result')
+temp_path = './resource/temp/'
+user_path = './resource/user/'
+result_path = './resource/result/'
 
 
 def save_user(cookies):

@@ -50,13 +50,12 @@ jobs:
         run: |
           $pyzbar_path = python -c "import pyzbar; import os; print(os.path.dirname(pyzbar.__file__))"
           Copy-Item "$pyzbar_path\*.dll" .
-          Get-ChildItem -Path "." -Filter "*.dll" -Name
-          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource;resource" --add-binary "libzbar-64.dll;." main.py
+          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-binary "libzbar-64.dll;." main.py
 
       - name: Build with PyInstaller (Mac/Linux)
         if: matrix.os != 'windows-latest'
         run: |
-          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource:resource" main.py
+          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
