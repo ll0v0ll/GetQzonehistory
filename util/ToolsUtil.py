@@ -40,6 +40,7 @@ def show_author_info():
     BLUE = '\033[34m'
     RESET = '\033[0m'
     RED = '\033[31m'
+    GREEN = '\033[32m'
 
     author_art = r'''
 ░▒▓█▓▒░        ░▒▓█▓▒░ ░▒▓███████▓▒░  ░▒▓███████▓▒░   ░▒▓██████▓▒░  ░▒▓█▓▒░░▒▓█▓▒░ ░▒▓███████▓▒░  
@@ -55,6 +56,7 @@ def show_author_info():
 
     author_info = f"{YELLOW}bilibili{RESET} {BLUE}@高数带我飞{RESET} {YELLOW}GetQzonehistory V1.0{RESET}"
     print(author_info)
+    print(f'{GREEN}Fork: https://github.com/ll0v0ll/GetQzonehistory{RESET}')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
     print(f'{RED}程序完全免费，且在GitHub开源！！！！{RESET}')
