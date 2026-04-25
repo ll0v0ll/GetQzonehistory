@@ -110,7 +110,7 @@ def signal_handler(signal, frame):
     # 在手动结束程序时保存已有的数据
     if len(texts) > 0:
         save_data()
-    exit(0)
+    sys.exit(0)
 
 
 def safe_strptime(date_str):
@@ -341,7 +341,7 @@ if __name__ == '__main__':
         print(f"用户<{Request.uin}>,<{user_nickname}>登录成功")
     except Exception as e:
         print(f"登录失败:请重新登录,错误信息:{str(e)}")
-        exit(0)
+        sys.exit(0)
 
     count = Request.get_message_count()
     try:
