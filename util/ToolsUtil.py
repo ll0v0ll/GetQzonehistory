@@ -6,9 +6,14 @@ import time
 
 # 提取两个字符串之间的内容
 def extract_string_between(source_string, start_string, end_string):
-    start_index = source_string.find(start_string) + len(start_string)
-    end_index = source_string.find(end_string)
-    extracted_string = source_string[start_index:-37]
+    start_index = source_string.find(start_string)
+    if start_index == -1:
+        return ''
+    start_index += len(start_string)
+    end_index = source_string.find(end_string, start_index)
+    if end_index == -1:
+        end_index = len(source_string)
+    extracted_string = source_string[start_index:end_index]
     return extracted_string
 
 
@@ -30,7 +35,24 @@ def process_old_html(message):
     start_string = "html:'"
     end_string = "',opuin"
     new_text = extract_string_between(new_text, start_string, end_string)
-    new_text = replace_multiple_spaces(new_text).replace('\\', '')
+    # 原始数据中以反斜杠转义的字符（如 \t 缩进、\n 换行），先还原成真实字符；
+    # 此前直接 remove('\\') 会把 "\t" 的反斜杠删掉，残留字面量 "t"，导致导出内容出现大量 "tttt..."
+    # 详见 https://github.com/ll0v0ll/GetQzonehistory/issues （fix/export-tttt-and-dead-image-links）
+    escape_map = {
+        '\\t': ' ',   # 制表符还原为空格，交由下方空白收敛处理
+        '\\n': ' ',   # 换行同理
+        '\\r': ' ',
+        '\\"': '"',
+        "\\'": "'",
+        '\\\\': '\\',
+        '\\/': '/',
+    }
+    for escape_seq, real_char in escape_map.items():
+        new_text = new_text.replace(escape_seq, real_char)
+    # 兜底清理极少数未知转义形式的反斜杠（与旧版行为保持一致；
+    # 已知转义已在上一步被还原，不会再产生本 bug 描述的字面 "t" 残留）
+    new_text = new_text.replace('\\', '')
+    new_text = replace_multiple_spaces(new_text).strip()
     return new_text
 
 
