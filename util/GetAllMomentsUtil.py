@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 
 import requests
 from tqdm import tqdm
@@ -91,7 +92,14 @@ def get_visible_moments_list():
         if 'commentlist' in item:
             for index, commentToMe in enumerate(item['commentlist']):
                 comment_content = commentToMe['content']
-                comment_create_time = commentToMe['createTime2']
+                # createTime2 为 "YYYY-MM-DD HH:MM:SS" 英文格式，与页面上的中文日期风格不统一，这里统一格式化
+                try:
+                    comment_create_time = datetime.strptime(
+                        commentToMe['createTime2'], '%Y-%m-%d %H:%M:%S'
+                    ).strftime('%Y年%m月%d日 %H:%M')
+                except (ValueError, KeyError, TypeError):
+                    # 解析失败时保留原值兜底
+                    comment_create_time = commentToMe.get('createTime2', '')
                 comment_nickname = commentToMe['name']
                 comment_uin = commentToMe['uin']
                 # 时间，内容，昵称，QQ号

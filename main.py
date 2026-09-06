@@ -114,17 +114,22 @@ def signal_handler(signal, frame):
 
 
 def safe_strptime(date_str):
-    # 部分日期缺少最后的秒数，首先解析带秒数的日期格式，如果解析失败再解析不带秒数的日期
-    try:
-        # 尝试按照带秒格式解析日期
-        return datetime.strptime(date_str, "%Y年%m月%d日 %H:%M:%S")
-    except ValueError:
-        # 尝试按照不带秒格式解析日期
+    # 部分日期缺少最后的秒数，且可能来自不同通道存在多种格式，依次尝试解析；
+    # 全部失败时返回 datetime.min，避免「昨天」「3天前」等无法解析的时间
+    # 在倒序排列时被当成最大值浮到列表最前面
+    date_str = str(date_str).strip()
+    formats = (
+        "%Y年%m月%d日 %H:%M:%S",
+        "%Y年%m月%d日 %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    )
+    for fmt in formats:
         try:
-            return datetime.strptime(date_str, "%Y年%m月%d日 %H:%M")
+            return datetime.strptime(date_str, fmt)
         except ValueError:
-            # 如果日期格式不对，返回 datetime.max
-            return datetime.max
+            continue
+    return datetime.min
 
 
 # 还原QQ空间网页版说说
@@ -161,9 +166,8 @@ def render_html(shuoshuo_path, zhuanfa_path):
             image_html = '<div class="image">'
             for img_url in img_url_lst:
                 if img_url and img_url.startswith('http'):
-                    # 将图片替换为高清图
-                    img_url = str(img_url).replace("/m&ek=1&kp=1", "/s&ek=1&kp=1")
-                    img_url = str(img_url).replace(r"!/m/", "!/s/")
+                    # 将图片替换为高清图（新版本导出时若已回写为本地 pic/ 相对路径，则此步无变化）
+                    img_url = get_hires_image_url(img_url)
                     image_html += f'<img src="{img_url}" alt="图片">\n'
             image_html += "</div>"
             comment_html = ""
@@ -201,6 +205,13 @@ def render_html(shuoshuo_path, zhuanfa_path):
     output_file = os.path.join(os.getcwd(), user_save_path, Request.uin + "_说说网页版.html")
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(final_html)
+
+
+# 将缩略图地址替换为高清图地址（幂等，重复调用结果不变）
+def get_hires_image_url(img_url):
+    img_url = str(img_url).replace("/m&ek=1&kp=1", "/s&ek=1&kp=1")
+    img_url = str(img_url).replace(r"!/m/", "!/s/")
+    return img_url
 
 
 # 并发下载单个图片
@@ -248,25 +259,49 @@ def save_data():
     pd.DataFrame(all_friends, columns=['昵称', 'QQ', '空间主页']).to_excel(
         user_save_path + Request.uin + '_好友列表.xlsx', index=False)
     
-    # 准备图片下载任务
+    # 准备图片下载任务（先统一升级为高清地址，保证 xlsx、下载、渲染三方使用的链接完全一致）
     image_download_tasks = []
     for item in texts:
         item_text = item[1]
         # 可见说说中可能存在多张图片
         item_pic_links = str(item[2]).split(",")
+        upgraded_links = []
         for item_pic_link in item_pic_links:
             if item_pic_link and len(item_pic_link) > 0 and 'http' in item_pic_link:
+                item_pic_link = get_hires_image_url(item_pic_link)
                 image_download_tasks.append((item_pic_link, item_text, pic_save_path))
-    
-    # 并发下载图片
+            upgraded_links.append(item_pic_link)
+        item[2] = ",".join(upgraded_links)
+
+    # 并发下载图片。executor.map 按任务顺序返回结果，据此建立 远程链接 -> 本地文件名 的映射
+    local_pic_by_url = {}
     if image_download_tasks:
         print(f"开始并发下载 {len(image_download_tasks)} 张图片...")
         with ThreadPoolExecutor(max_workers=5) as executor:  # 限制并发数避免过载
-            for _ in tqdm(executor.map(download_single_image, image_download_tasks), 
-                         total=len(image_download_tasks), 
-                         desc="下载图片", 
-                         unit="张"):
-                pass
+            results = list(tqdm(executor.map(download_single_image, image_download_tasks),
+                                total=len(image_download_tasks),
+                                desc="下载图片",
+                                unit="张"))
+        for (item_pic_link, _item_text, _pic_save_path), pic_name in zip(image_download_tasks, results):
+            if pic_name:
+                local_pic_by_url[item_pic_link] = pic_name
+
+    # 关键修复：把下载成功的本地相对路径写回数据，
+    # 之后导出的网页直接引用 pic/ 本地图片，远程链接失效也不会裂图；
+    # 未下载成功的条目保留原始远程链接作为兜底
+    for item in texts:
+        links = str(item[2]).split(",")
+        new_links = []
+        replaced = False
+        for link in links:
+            pic_name = local_pic_by_url.get(link)
+            if pic_name:
+                new_links.append('pic/' + pic_name)
+                replaced = True
+            else:
+                new_links.append(link)
+        if replaced:
+            item[2] = ",".join(new_links)
     
     # 分类处理消息
     for item in texts:
