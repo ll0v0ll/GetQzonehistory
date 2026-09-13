@@ -56,6 +56,7 @@ jobs:
           pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource:resource" main_gui.py
 
       - name: Verify artifact
+        shell: bash
         run: |
           ls -la dist/
           test -f "dist/GetQzonehistory_${{ matrix.target }}${{ matrix.suffix }}" && echo "ARTIFACT OK"
