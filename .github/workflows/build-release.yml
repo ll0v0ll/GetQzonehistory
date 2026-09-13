@@ -48,14 +48,17 @@ jobs:
       - name: Build with PyInstaller (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          $pyzbar_path = python -c "import pyzbar; import os; print(os.path.dirname(pyzbar.__file__))"
-          Copy-Item "$pyzbar_path\*.dll" .
-          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-binary "libzbar-64.dll;." main.py
+          pyinstaller --onefile --noconsole --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource;resource" main_gui.py
 
       - name: Build with PyInstaller (Mac/Linux)
         if: matrix.os != 'windows-latest'
         run: |
-          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" main.py
+          pyinstaller --onefile --name "GetQzonehistory_${{ matrix.target }}" --add-data "resource:resource" main_gui.py
+
+      - name: Verify artifact
+        run: |
+          ls -la dist/
+          test -f "dist/GetQzonehistory_${{ matrix.target }}${{ matrix.suffix }}" && echo "ARTIFACT OK"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -87,13 +90,18 @@ jobs:
             artifacts/GetQzonehistory_linux/GetQzonehistory_linux
           body: |
             ## GetQzonehistory ${{ github.ref_name }}
-            
+
             ### 使用方法
             1. 下载对应系统的可执行文件
-            2. Windows用户直接双击运行 `GetQzonehistory_win.exe`
-            3. Mac/Linux用户需要先赋予执行权限: `chmod +x GetQzonehistory_mac` 或 `chmod +x GetQzonehistory_linux`
-            4. 运行程序后扫码登录QQ即可
-            
+            2. Windows 用户直接双击运行 `GetQzonehistory_win.exe`（GUI 版，扫码登录 QQ 空间账号）
+            3. Mac/Linux 用户需要先赋予执行权限: `chmod +x GetQzonehistory_mac` 或 `chmod +x GetQzonehistory_linux`
+            4. 在账号列表页选择已登录账号，或扫码登录新账号
+            5. 登录后可拉取历史说说，并导出 Excel / HTML / 图片
+
+            ### 数据说明
+            - 运行时数据（登录状态、导出结果、缓存、日志）保存在可执行文件所在目录下的 `data/` 文件夹
+            - 首次运行自动生成 `config.ini` 配置文件
+
             ### 更新内容
             请查看 [commits](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }})
         env:

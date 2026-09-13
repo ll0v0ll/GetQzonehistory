@@ -12,9 +12,10 @@ from tqdm import tqdm
 from util import RequestUtil as Request
 from util import LoginUtil
 from util import ToolsUtil as Tool
+import util.ConfigUtil as Config
 
 QQ_NUMBER = Request.uin
-WORKDIR = f"./resource/fetch-all/{QQ_NUMBER}"   # 通过QQ号进行区分配置文件，防止误加载其他用户信息
+WORKDIR = os.path.join(Config.fetch_path, QQ_NUMBER)  # 通过QQ号进行区分配置文件，防止误加载其他用户信息
 USER_QZONE_INFO = 'user_qzone_info.json'
 QZONE_MOMENTS_ALL = 'qzone_moments_all.json'
 

@@ -9,7 +9,9 @@ import requests
 
 from util import LoginUtil
 
-WORKDIR = "./resource/fetch-all/"
+import util.ConfigUtil as Config
+
+WORKDIR = Config.fetch_path + '/'
 MESSAGE_SAMPLE = 'msg-one.json'
 MESSAGE_ALL = 'msg-all.json'
 cookies = None

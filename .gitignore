@@ -126,7 +126,13 @@ Thumbs.db
 
 
 # 项目特定的忽略项
-# 忽略resource文件夹下的所有内容，除了config文件夹
-resource/*
-!resource/config/
-!resource/config/*
+# 隐私数据：登录 cookie / 抓取结果 / 日志 / 缓存，统一存放于 data/，勿提交
+data/
+
+
+# 隐私数据
+data/
+
+
+# 用户本地配置（含本地路径，勿提交）
+config.ini
