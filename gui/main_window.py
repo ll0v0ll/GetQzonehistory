@@ -446,11 +446,16 @@ class MainWindow(QMainWindow):
 
     # ================= 渲染 =================
     def apply_tab(self, name):
+        self._current_tab = name
         if name == '统计':
             self._render_stats_page()
             self._set_menu_checked('统计')
+            # 统计页不属于顶部 tab：取消顶部全部高亮，避免残留错乱
+            self._tab_group.setExclusive(False)
+            for i in range(len(TABS)):
+                self._tab_group.button(i).setChecked(False)
+            self._tab_group.setExclusive(True)
             return
-        self._current_tab = name
         self._set_menu_checked(name if name in ('全部',) else '我的说说')
         # 同步 tab 按钮状态
         if name in TABS:
@@ -459,7 +464,7 @@ class MainWindow(QMainWindow):
         self._render_moments(self.tab_data.get(name, []))
 
     def _set_menu_checked(self, tab):
-        mapping = {'全部': 0, '统计': 2}
+        mapping = {'全部': 0, '我的说说': 0, '统计': 2}
         idx = mapping.get(tab)
         if idx is not None:
             self._menu_group.button(idx).setChecked(True)
@@ -908,8 +913,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f'QQ 空间 - {nickname} 的历史数据')
         self._classify()
         self._update_stats()
-        if self._current_tab in TABS:
-            self.apply_tab(self._current_tab)
+        self.apply_tab(self._current_tab)
 
     # ================= 交互 =================
     def start_fetch(self):
