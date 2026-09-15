@@ -555,7 +555,7 @@ class MainWindow(QMainWindow):
         body.addWidget(content)
         head.addLayout(body, 1)
         lay.addLayout(head)
-        self.flow_layout.insertWidget(0, card)
+        self.flow_layout.insertWidget(self.flow_layout.count() - 1, card)
 
     def _load_more(self):
         """渲染下一批说说卡片。"""
@@ -752,7 +752,7 @@ class MainWindow(QMainWindow):
             year_lb = QLabel(years[0], hero)
             year_lb.setObjectName('HeroYears')
             hlay.addWidget(year_lb, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.flow_layout.insertWidget(0, hero)
+        self.flow_layout.insertWidget(self.flow_layout.count() - 1, hero)
 
         # 统计卡（参考 QzoneArchive 仪表盘）
         cards = QHBoxLayout()
@@ -764,7 +764,7 @@ class MainWindow(QMainWindow):
             ('本地占用', self._fmt_size(used), '导出 + 抓取缓存', '#F5A623', 'database'),
         ):
             cards.addWidget(self._stat_card(label, value, hint, color, icon))
-        self.flow_layout.insertLayout(1, cards)
+        self.flow_layout.insertLayout(self.flow_layout.count() - 1, cards)
 
         # ---- 互动排行 + 数据分布（参考 QzoneArchive 仪表盘，无数据则整卡不渲染） ----
         stats_grid = QHBoxLayout()
@@ -877,7 +877,7 @@ class MainWindow(QMainWindow):
             stats_grid.addWidget(dist_card, 1)
 
         if stats_grid.count() > 0:
-            self.flow_layout.insertLayout(2, stats_grid)
+            self.flow_layout.insertLayout(self.flow_layout.count() - 1, stats_grid)
 
         # 最近动态（无数据则整卡不渲染）
         recent = sorted(texts, key=lambda x: str(x[0]), reverse=True)[:5]
@@ -904,7 +904,7 @@ class MainWindow(QMainWindow):
                 row.setStyleSheet('color:#555555; font-size:12px;')
                 row.setWordWrap(True)
                 rlay.addWidget(row)
-            self.flow_layout.insertWidget(3, recent_card)
+            self.flow_layout.insertWidget(self.flow_layout.count() - 1, recent_card)
 
         # 已导出文件清单
         base = self._result_path
@@ -927,7 +927,7 @@ class MainWindow(QMainWindow):
         fl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         fl.setStyleSheet('color:#666666; font-size:12px; line-height:1.6;')
         flay.addWidget(fl)
-        self.flow_layout.insertWidget(4, file_card)
+        self.flow_layout.insertWidget(self.flow_layout.count() - 1, file_card)
 
     # ================= 昵称（后台获取后更新） =================
     def update_nickname(self, nickname):
