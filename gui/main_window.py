@@ -6,6 +6,7 @@
 """
 import os
 import platform
+import re
 import subprocess
 import time
 
@@ -18,14 +19,14 @@ from PyQt6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QHeaderView,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
 import util.ConfigUtil as Config
-from gui.image_loader import ImageLoader
+from gui.image_loader import ImageLoader, render_svg_icon
 from gui.logger import get_logger
 from gui.moment_widget import MomentWidget, make_circle
 from gui.workers import FetchWorker
 
 log = get_logger('main')
 
-TABS = ['全部', '说说', '转发', '留言', '其他', '好友']
+TABS = ['全部', '说说', '转发', '留言', '其他']
 RENDER_BATCH = 20  # 每次滚动加载条数
 
 
@@ -134,22 +135,6 @@ class MainWindow(QMainWindow):
         sub = QLabel('GetQzonehistory · 历史数据获取', nav)
         sub.setObjectName('NavSub')
         lay.addWidget(sub)
-        lay.addSpacing(20)
-
-        nav_btns = ('主页', '说说', '相册', '留言板', '访客')
-        self._nav_group = QButtonGroup(self)
-        self._nav_group.setExclusive(True)
-        for i, name in enumerate(nav_btns):
-            b = QPushButton(name, nav)
-            b.setObjectName('NavBtn')
-            b.setCheckable(True)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if name == '说说':
-                b.setChecked(True)
-            b.clicked.connect(lambda _, n=name: self._on_nav_click(n))
-            self._nav_group.addButton(b, i)
-            lay.addWidget(b)
-
         lay.addStretch(1)
 
         self.nav_avatar = QLabel(nav)
@@ -169,13 +154,6 @@ class MainWindow(QMainWindow):
         lay.addSpacing(6)
         lay.addWidget(logout)
         return nav
-
-    def _on_nav_click(self, name):
-        if name == '说说':
-            self.apply_tab('全部')
-        else:
-            # 只读工具：不可用模块不弹提示框，仅状态栏轻提示
-            self.status_text.setText(f'【{name}】为界面演示，本项目仅提供历史数据获取与浏览')
 
     # ----- 左侧栏 -----
     def _build_sidebar(self):
@@ -239,7 +217,7 @@ class MainWindow(QMainWindow):
         self._menu_group = QButtonGroup(self)
         self._menu_group.setExclusive(True)
         for i, (name, tab) in enumerate((('我的说说', '全部'), ('全部动态', '全部'),
-                                         ('好友列表', '好友'), ('数据统计', '统计'))):
+                                         ('数据统计', '统计'))):
             b = QPushButton(name, menu)
             b.setObjectName('MenuBtn')
             b.setCheckable(True)
@@ -432,7 +410,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 log.error('读取本地数据失败: %s', e, exc_info=True)
         self._classify()
-        self._load_friends()
         self._update_stats()
 
     def _classify(self):
@@ -451,17 +428,6 @@ class MainWindow(QMainWindow):
                 self.tab_data['其他'].append(item[:-1])
         self.tab_data['全部'] = self.texts
 
-    def _load_friends(self):
-        base = self._result_path
-        path = os.path.join(base, f'{self.uin}_好友列表.xlsx')
-        self.tab_data['好友'] = []
-        if os.path.exists(path):
-            try:
-                df = pd.read_excel(path)
-                self.tab_data['好友'] = df.values.tolist()
-            except Exception as e:
-                log.warning('读取好友列表失败: %s', e)
-
     def _update_stats(self):
         pic_path = os.path.join(self._result_path or '', 'pic')
         pic_count = 0
@@ -474,7 +440,6 @@ class MainWindow(QMainWindow):
             f'转发：{len(self.tab_data["转发"])}',
             f'留言：{len(self.tab_data["留言"])}',
             f'其他：{len(self.tab_data["其他"])}',
-            f'好友：{len(self.tab_data["好友"])}',
             f'图片：{pic_count}',
         ]
         self.stats_lb.setText('\n'.join(lines))
@@ -486,18 +451,15 @@ class MainWindow(QMainWindow):
             self._set_menu_checked('统计')
             return
         self._current_tab = name
-        self._set_menu_checked(name if name in ('全部', '好友') else '我的说说')
+        self._set_menu_checked(name if name in ('全部',) else '我的说说')
         # 同步 tab 按钮状态
         if name in TABS:
             self._tab_group.button(TABS.index(name)).setChecked(True)
         self.tab_count_lb.setText(f'共 {len(self.tab_data.get(name, []))} 条')
-        if name == '好友':
-            self._render_friends()
-        else:
-            self._render_moments(self.tab_data.get(name, []))
+        self._render_moments(self.tab_data.get(name, []))
 
     def _set_menu_checked(self, tab):
-        mapping = {'全部': 0, '好友': 2, '统计': 3}
+        mapping = {'全部': 0, '统计': 2}
         idx = mapping.get(tab)
         if idx is not None:
             self._menu_group.button(idx).setChecked(True)
@@ -603,11 +565,25 @@ class MainWindow(QMainWindow):
             img_links = [x for x in str(item[2]).split(',') if x.strip()] \
                 if len(item) > 2 else []
             comments = self._parse_comments(item[3]) if len(item) > 3 else []
+            like_count = 0
+            likers = []
+            if len(item) > 4:
+                try:
+                    like_count = int(item[4] or 0)
+                except (TypeError, ValueError):
+                    like_count = 0
+            if len(item) > 6 and isinstance(item[6], (list, tuple)):
+                likers = [str(x) for x in item[6] if x]
+            pics_all = []
+            if len(item) > 7 and isinstance(item[7], (list, tuple)):
+                pics_all = item[7]
         except Exception as e:
             log.warning('说说数据解析失败: %s', e)
             return None
         return MomentWidget(time_str, content, img_links, comments,
-                            self.uin, self.nickname, self)
+                            self.uin, self.nickname, self,
+                            likers=likers, like_count=like_count,
+                            pics_all=pics_all)
 
     def _on_scroll(self, value):
         """滚动到底部附近时加载下一批。"""
@@ -629,37 +605,295 @@ class MainWindow(QMainWindow):
             return v
         return []
 
-    def _render_friends(self):
-        self._clear_flow()
-        table = QTableWidget(len(self.tab_data['好友']), 3, self)
-        table.setHorizontalHeaderLabels(['昵称', 'QQ', '空间主页'])
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        for r, row in enumerate(self.tab_data['好友']):
-            for c, val in enumerate(row[:3]):
-                table.setItem(r, c, QTableWidgetItem(str(val)))
-        self.flow_layout.insertWidget(0, table)
+    # ================= 仪表盘（数据统计页） =================
+    @staticmethod
+    def _dir_size(path):
+        total = 0
+        if os.path.exists(path):
+            for root, _, files in os.walk(path):
+                for f in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, f))
+                    except OSError:
+                        pass
+        return total
+
+    @staticmethod
+    def _fmt_size(size):
+        if size < 1024 * 1024:
+            return f'{size / 1024:.1f} KB'
+        return f'{size / 1024 / 1024:.1f} MB'
+
+    def _count_local_images(self):
+        pic_path = os.path.join(self._result_path or '', 'pic')
+        if not os.path.exists(pic_path):
+            return 0
+        return len([f for f in os.listdir(pic_path)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif'))])
+
+    def _render_svg_icon(self, name, color, size=36):
+        """渲染 resource/icons/<name>.svg 为指定颜色的 pixmap（Font Awesome，开源免费）。
+
+        图标缺失时回退为 emoji 字符，保证界面不出现空白。
+        """
+        return render_svg_icon(name, color, size)
+
+    def _stat_card(self, label, value, hint, color, icon):
+        card = QFrame(self)
+        card.setObjectName('StatCard')
+        lay = QHBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(10)
+        ic = QLabel(card)
+        ic.setFixedSize(36, 36)
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ic.setStyleSheet(f'background:{color}22; border-radius:8px;')
+        pm = self._render_svg_icon(icon, color)
+        if pm is not None:
+            ic.setPixmap(pm.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation))
+        else:
+            ic.setText(icon)
+            ic.setStyleSheet(f'font-size:16px; background:{color}22; color:{color};'
+                             ' border-radius:8px;')
+        lay.addWidget(ic)
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        lb = QLabel(label, card)
+        lb.setObjectName('StatCardLabel')
+        val = QLabel(value, card)
+        val.setObjectName('StatCardValue')
+        val.setStyleSheet(f'color:{color};')
+        ht = QLabel(hint, card)
+        ht.setObjectName('StatCardHint')
+        col.addWidget(lb)
+        col.addWidget(val)
+        col.addWidget(ht)
+        lay.addLayout(col, 1)
+        return card
 
     def _render_stats_page(self):
         self._clear_flow()
         self.tab_count_lb.setText('')
+        texts = self.tab_data.get('全部', []) or []
+
+        # 统计口径：内存动态 + 本地已下载图片 + 目录占用
+        pic_count = self._count_local_images()
+        comment_total = sum(len(t[3]) for t in texts
+                            if len(t) > 3 and isinstance(t[3], list))
+        like_total = sum(int(t[4]) for t in texts
+                         if len(t) > 4 and str(t[4]).isdigit())
+        used = self._dir_size(self._result_path) + self._dir_size(Config.fetch_path)
+
+        # ---- hero 回忆区（参考 QzoneArchive 仪表盘 hero-panel） ----
+        hero = QFrame(self)
+        hero.setObjectName('HeroPanel')
+        hlay = QHBoxLayout(hero)
+        hlay.setContentsMargins(22, 18, 22, 18)
+        hlay.setSpacing(16)
+
+        hcol = QVBoxLayout()
+        hcol.setSpacing(4)
+        kicker = QLabel(f'时光档案馆 · QQ {self.uin}', hero)
+        kicker.setObjectName('HeroKicker')
+        hcol.addWidget(kicker)
+        if texts:
+            title = QLabel(f'欢迎回来，{self.nickname} —— 这里珍藏着你的 {len(texts)} 条空间记忆',
+                           hero)
+        else:
+            title = QLabel('把珍贵的空间记忆，安全保存在本地', hero)
+        title.setObjectName('HeroTitle')
+        title.setWordWrap(True)
+        hcol.addWidget(title)
+        sub = QLabel(f'本地已保存 {len(texts)} 条动态 · {pic_count} 张照片'
+                     f' · {comment_total} 条评论 · {like_total} 个赞', hero)
+        sub.setObjectName('HeroSub')
+        hcol.addWidget(sub)
+        hlay.addLayout(hcol, 1)
+
+        # 右侧年份大字装饰（最早年份 → 今年，营造时光感）
+        years = sorted({str(t[0])[:4] for t in texts
+                        if len(t) > 0 and str(t[0])[:4].isdigit()})
+        if years:
+            year_lb = QLabel(years[0], hero)
+            year_lb.setObjectName('HeroYears')
+            hlay.addWidget(year_lb, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.flow_layout.insertWidget(0, hero)
+
+        # 统计卡（参考 QzoneArchive 仪表盘）
+        cards = QHBoxLayout()
+        cards.setSpacing(12)
+        for label, value, hint, color, icon in (
+            ('动态', str(len(texts)), '本地归档动态总数', '#49A1F9', 'file-lines'),
+            ('图片', str(pic_count), '已下载说说图片', '#7C5CFC', 'images'),
+            ('评论', str(comment_total), '含楼中楼回复', '#22B07D', 'comments'),
+            ('本地占用', self._fmt_size(used), '导出 + 抓取缓存', '#F5A623', 'database'),
+        ):
+            cards.addWidget(self._stat_card(label, value, hint, color, icon))
+        self.flow_layout.insertLayout(1, cards)
+
+        # ---- 互动排行 + 数据分布（参考 QzoneArchive 仪表盘，无数据则整卡不渲染） ----
+        stats_grid = QHBoxLayout()
+        stats_grid.setSpacing(12)
+
+        from collections import Counter
+        commenters = Counter()
+        for t in texts:
+            if len(t) > 3 and isinstance(t[3], list):
+                for c in t[3]:
+                    if len(c) > 2 and c[2]:
+                        commenters[c[2]] += 1
+        if commenters:
+            # 左：评论互动排行
+            rank_card = QFrame(self)
+            rank_card.setObjectName('MomentCard')
+            rlay = QVBoxLayout(rank_card)
+            rlay.setContentsMargins(16, 12, 16, 12)
+            rlay.setSpacing(8)
+            rhead = QHBoxLayout()
+            rt = QLabel('评论互动排行', rank_card)
+            rt.setObjectName('SectionTitle')
+            rk = QLabel('INTERACTION', rank_card)
+            rk.setObjectName('SectionKicker')
+            rhead.addWidget(rt)
+            rhead.addStretch(1)
+            rhead.addWidget(rk, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+            rlay.addLayout(rhead)
+            mx = max(commenters.values())
+            for name, cnt in commenters.most_common(8):
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                nm = QLabel(str(name), rank_card)
+                nm.setStyleSheet('color:#333333; font-size:12px; font-weight:600;')
+                nm.setFixedWidth(88)
+                nm.setToolTip(str(name))
+                bar_bg = QFrame(rank_card)
+                bar_bg.setStyleSheet('background:#EEF2F7; border-radius:4px;')
+                bar_bg.setFixedHeight(8)
+                bb = QHBoxLayout(bar_bg)
+                bb.setContentsMargins(0, 0, 0, 0)
+                bb.setSpacing(0)
+                fill = QFrame(bar_bg)
+                fill.setStyleSheet('background:#49A1F9; border-radius:4px;')
+                fill.setFixedWidth(max(8, int(88 * cnt / mx)))
+                bb.addWidget(fill)
+                bb.addStretch(1)
+                ct = QLabel(str(cnt), rank_card)
+                ct.setStyleSheet('color:#999999; font-size:11px;')
+                ct.setFixedWidth(26)
+                row.addWidget(nm)
+                row.addWidget(bar_bg, 1)
+                row.addWidget(ct)
+                rlay.addLayout(row)
+            stats_grid.addWidget(rank_card, 1)
+
+        # 右：动态分布（按年 + 来源构成，无年份数据则整卡不渲染）
+        years = Counter()
+        srcs = Counter()
+        for t in texts:
+            y = str(t[0])[:4]
+            if y.isdigit():
+                years[y] += 1
+            srcs[t[5] if len(t) > 5 and t[5] else '历史'] += 1
+        if years:
+            dist_card = QFrame(self)
+            dist_card.setObjectName('MomentCard')
+            dlay = QVBoxLayout(dist_card)
+            dlay.setContentsMargins(16, 12, 16, 12)
+            dlay.setSpacing(8)
+            dhead = QHBoxLayout()
+            dt = QLabel('数据分布', dist_card)
+            dt.setObjectName('SectionTitle')
+            dk = QLabel('DISTRIBUTION', dist_card)
+            dk.setObjectName('SectionKicker')
+            dhead.addWidget(dt)
+            dhead.addStretch(1)
+            dhead.addWidget(dk, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+            dlay.addLayout(dhead)
+            ymax = max(years.values())
+            for y in sorted(years, reverse=True):
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                yl = QLabel(y, dist_card)
+                yl.setStyleSheet('color:#555555; font-size:11px;')
+                yl.setFixedWidth(42)
+                bar_bg = QFrame(dist_card)
+                bar_bg.setStyleSheet('background:#EEF2F7; border-radius:4px;')
+                bar_bg.setFixedHeight(8)
+                bb = QHBoxLayout(bar_bg)
+                bb.setContentsMargins(0, 0, 0, 0)
+                bb.setSpacing(0)
+                fill = QFrame(bar_bg)
+                fill.setStyleSheet('background:#22B07D; border-radius:4px;')
+                fill.setFixedWidth(max(6, int(88 * years[y] / ymax)))
+                bb.addWidget(fill)
+                bb.addStretch(1)
+                yc = QLabel(str(years[y]), dist_card)
+                yc.setStyleSheet('color:#999999; font-size:11px;')
+                yc.setFixedWidth(26)
+                row.addWidget(yl)
+                row.addWidget(bar_bg, 1)
+                row.addWidget(yc)
+                dlay.addLayout(row)
+            src_line = '　'.join(f'{k} {v}' for k, v in srcs.most_common(5))
+            sl = QLabel(src_line, dist_card)
+            sl.setStyleSheet('color:#B0BCCB; font-size:11px;')
+            sl.setWordWrap(True)
+            dlay.addWidget(sl)
+            stats_grid.addWidget(dist_card, 1)
+
+        if stats_grid.count() > 0:
+            self.flow_layout.insertLayout(2, stats_grid)
+
+        # 最近动态（无数据则整卡不渲染）
+        recent = sorted(texts, key=lambda x: str(x[0]), reverse=True)[:5]
+        if recent:
+            recent_card = QFrame(self)
+            recent_card.setObjectName('MomentCard')
+            rlay = QVBoxLayout(recent_card)
+            rlay.setContentsMargins(16, 12, 16, 12)
+            rlay.setSpacing(8)
+            rhead = QHBoxLayout()
+            k = QLabel('RECENT', recent_card)
+            k.setObjectName('SectionKicker')
+            t = QLabel('最近动态', recent_card)
+            t.setObjectName('SectionTitle')
+            rhead.addWidget(t)
+            rhead.addWidget(k, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+            rlay.addLayout(rhead)
+            for item in recent:
+                time_str = str(item[0])
+                body = str(item[1]) if len(item) > 1 else ''
+                body = re.sub(r'\[em\].*?\[/em\]', '[表情]', body)
+                row = QLabel(f'<b>{time_str}</b>　{body[:60]}', recent_card)
+                row.setTextFormat(Qt.TextFormat.RichText)
+                row.setStyleSheet('color:#555555; font-size:12px;')
+                row.setWordWrap(True)
+                rlay.addWidget(row)
+            self.flow_layout.insertWidget(3, recent_card)
+
+        # 已导出文件清单
         base = self._result_path
         files = []
         if base and os.path.exists(base):
             for f in sorted(os.listdir(base)):
                 if os.path.isfile(os.path.join(base, f)):
                     files.append(f)
-        lines = ['【已导出文件】'] + files if files else ['（尚未导出，请先点击「开始获取数据」）']
-        body = '\n'.join(lines)
-        lb = QLabel(body, self)
-        lb.setWordWrap(True)
-        lb.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        lb.setStyleSheet('padding:18px; font-size:13px;')
-        self.flow_layout.insertWidget(0, lb)
+        file_card = QFrame(self)
+        file_card.setObjectName('MomentCard')
+        flay = QVBoxLayout(file_card)
+        flay.setContentsMargins(16, 12, 16, 12)
+        flay.setSpacing(6)
+        ft = QLabel('已导出文件', file_card)
+        ft.setObjectName('SectionTitle')
+        flay.addWidget(ft)
+        body = '\n'.join(files) if files else '（尚未导出，请先点击「开始获取数据」）'
+        fl = QLabel(body, file_card)
+        fl.setWordWrap(True)
+        fl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        fl.setStyleSheet('color:#666666; font-size:12px; line-height:1.6;')
+        flay.addWidget(fl)
+        self.flow_layout.insertWidget(4, file_card)
 
     # ================= 昵称（后台获取后更新） =================
     def update_nickname(self, nickname):

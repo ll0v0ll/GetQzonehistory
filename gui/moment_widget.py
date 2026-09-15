@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                              QPushButton, QVBoxLayout)
 
 import util.ConfigUtil as Config
-from gui.image_loader import ImageLoader, PIC_DIR, emoji_to_html
+from gui.image_loader import (ImageLoader, PIC_DIR, emoji_to_html,
+                              render_svg_icon)
 from gui.logger import get_logger
 from gui.styles import C_BORDER, C_TEXT_SUB, C_LINK
 
@@ -170,9 +171,27 @@ class ClickableImage(QLabel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._pm = None
         self._link = ''
+        self.candidates = []   # 图片候选 URL（首个为主，失败逐个回退，QzoneArchive 思路）
+        self.candidate_index = 0
+        self.current_key = ''  # 最近一次请求的 URL hash（用于失败识别）
 
     def set_link(self, link):
         self._link = link
+
+    def set_candidates(self, cands):
+        """设置候选 URL 列表（已去重/补全 https）。"""
+        self.candidates = [str(c) for c in cands if str(c).strip()]
+        self.candidate_index = 0
+
+    def next_candidate(self):
+        """返回下一个候选 URL（补全 https），全部用完返回 None。"""
+        while self.candidate_index < len(self.candidates):
+            u = self.candidates[self.candidate_index]
+            self.candidate_index += 1
+            if u.startswith('//'):
+                u = 'https:' + u
+            return u
+        return None
 
     def set_pix(self, pm: QPixmap):
         self._pm = pm
@@ -180,24 +199,28 @@ class ClickableImage(QLabel):
             self._show_placeholder()
             return
         if self.fit_original:
-            # 单图：等比例缩放显示（上限 = 内容区可用宽度/高度，超出按比例缩小）。
-            # 如需完全原图显示，可改用下面被注释的写法：
-            #   w, h = pm.width(), pm.height()
-            #   self.setFixedSize(w, h)
-            #   self.setPixmap(pm)
+            # 单图：只有超过内容区可用上限的图才等比例缩小（任何看图器的标准行为），
+            # 小图完全按原图显示，不做任何二次处理
             w, h = pm.width(), pm.height()
             if w > self.FIT_MAX_W or h > self.FIT_MAX_H:
                 ratio = min(self.FIT_MAX_W / w, self.FIT_MAX_H / h)
                 w, h = max(1, int(w * ratio)), max(1, int(h * ratio))
-            self.setFixedSize(w, h)
-            self.setPixmap(pm.scaled(w, h,
-                                     Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation))
+                self.setFixedSize(w, h)
+                self.setPixmap(pm.scaled(w, h,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
+            else:
+                self.setFixedSize(w, h)
+                self.setPixmap(pm)
         else:
-            # 多图缩略网格：适配格子尺寸
-            self.setPixmap(pm.scaled(self.width() - 4, self.height() - 4,
-                                     Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation))
+            # 多图缩略网格：小图按原图显示（不放大），只有超过格子的图才缩到格子内
+            tw, th = self.width() - 4, self.height() - 4
+            if pm.width() <= tw and pm.height() <= th:
+                self.setPixmap(pm)
+            else:
+                self.setPixmap(pm.scaled(tw, th,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
         self.setText('')
 
     def _show_placeholder(self):
@@ -223,7 +246,8 @@ class MomentWidget(QFrame):
     """单条说说卡片。"""
 
     def __init__(self, time_str, content, img_links, comments,
-                 avatar_uin, nickname, parent=None):
+                 avatar_uin, nickname, parent=None, likers=None,
+                 like_count=0, pics_all=None):
         super().__init__(parent)
         self.setObjectName('MomentCard')
         self.time_str = time_str
@@ -232,9 +256,17 @@ class MomentWidget(QFrame):
         self.comments = comments or []
         self.avatar_uin = avatar_uin
         self.nickname = nickname
+        self.likers = list(likers or [])
+        self.like_count = int(like_count or 0)
+        self.pics_all = list(pics_all or [])  # 每组图片的候选 URL（下载失败逐个回退）
         self._emoji_codes = set()
         self._grid_cells = []      # (link, cell) 列表
         self._comment_labels = []  # 评论富文本标签
+        self._comment_rows = []    # 每条评论的全部控件（折叠时统一隐藏）
+        self._comment_avatars = {}  # uin -> 评论头像 QLabel
+        self._comments_expanded = False
+        self._comments_box = None
+        self._toggle_btn = None
         self._build_ui()
         ImageLoader.instance().loaded.connect(self._on_image_loaded)
         self._load_all()
@@ -304,6 +336,12 @@ class MomentWidget(QFrame):
         for i, link in enumerate(self.img_links):
             cell = ClickableImage(size, self, fit_original=(n == 1))
             cell.set_link(link)
+            cands = [link]
+            if i < len(self.pics_all) and isinstance(self.pics_all[i], (list, tuple)):
+                group = [str(x) for x in self.pics_all[i] if x]
+                if group:
+                    cands = group
+            cell.set_candidates(cands)
             cell.clicked.connect(self._show_photo)
             self.grid.addWidget(cell, i // cols, i % cols)
             self._grid_cells.append((link, cell))
@@ -314,20 +352,44 @@ class MomentWidget(QFrame):
             return
         box = QFrame(self)
         box.setObjectName('CommentBox')
+        self._comments_box = box
         lay = QVBoxLayout(box)
         lay.setContentsMargins(12, 8, 12, 8)
         lay.setSpacing(6)
-        for c in self.comments:
+        for i, c in enumerate(self.comments):
             row = QHBoxLayout()
-            row.setSpacing(6)
+            row.setSpacing(8)
             row.setAlignment(Qt.AlignmentFlag.AlignTop)
             try:
                 ctime, ccontent, cnick, cuin = c
             except (TypeError, ValueError):
                 continue
-            name = QLabel(str(cnick), box)
+            av = QLabel(box)
+            av.setFixedSize(28, 28)
+            av.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            av.setStyleSheet(
+                f'background:#E3EAF2; border:1px solid {C_BORDER};'
+                'border-radius:14px; color:#94A7BC; font-size:12px;')
+            av.setText('Q')
+            cuin = str(cuin or '').strip()
+            if cuin:
+                self._comment_avatars[cuin] = av
+                ImageLoader.instance().avatar(cuin)
+            row.addWidget(av, 0, Qt.AlignmentFlag.AlignTop)
+
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            head = QHBoxLayout()
+            head.setSpacing(6)
+            name = QLabel(str(cnick or 'QQ用户'), box)
             name.setObjectName('CommentText')
             name.setStyleSheet(f'color:{C_LINK}; font-weight:bold;')
+            t = QLabel(str(ctime), box)
+            t.setStyleSheet(f'color:{C_TEXT_SUB}; font-size:11px;')
+            head.addWidget(name)
+            head.addStretch(1)
+            head.addWidget(t)
+            col.addLayout(head)
             msg = QLabel(box)
             msg.setWordWrap(True)
             msg.setTextFormat(Qt.TextFormat.RichText)
@@ -335,25 +397,72 @@ class MomentWidget(QFrame):
             msg.setText(emoji_to_html(str(ccontent), 16))
             self._comment_labels.append(msg)
             self._emoji_codes |= collect_emoji_codes(ccontent)
-            t = QLabel(str(ctime), box)
-            t.setStyleSheet(f'color:{C_TEXT_SUB}; font-size:11px;')
-            row.addWidget(name)
-            row.addWidget(msg, 1)
+            col.addWidget(msg)
+            row.addLayout(col, 1)
+            self._comment_rows.append([av, name, t, msg])
             lay.addLayout(row)
-            lay.addWidget(t, 0, Qt.AlignmentFlag.AlignRight)
+        if len(self.comments) > 3:
+            self._toggle_btn = QPushButton(f'查看全部 {len(self.comments)} 条评论', box)
+            self._toggle_btn.setObjectName('MoreBtn')
+            self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._toggle_btn.clicked.connect(self._toggle_comments)
+            lay.addWidget(self._toggle_btn)
+            self._apply_comment_fold()
         body.addWidget(box)
 
+    def _apply_comment_fold(self):
+        """评论 >3 条时折叠/展开：前 3 条可见，其余隐藏。"""
+        expanded = self._comments_expanded
+        for i, widgets in enumerate(self._comment_rows):
+            show = expanded or i < 3
+            for w in widgets:
+                w.setVisible(show)
+        if self._toggle_btn:
+            if expanded:
+                self._toggle_btn.setText('收起评论')
+            else:
+                self._toggle_btn.setText(f'查看全部 {len(self.comments)} 条评论')
+
+    def _toggle_comments(self):
+        self._comments_expanded = not self._comments_expanded
+        self._apply_comment_fold()
+
     def _build_actions(self, body):
+        """互动信息条：赞数 / 评论数 / 图片数（替代无效的演示操作按钮）。"""
+        stats = [('heart', self.like_count, '赞'),
+                 ('comments', len(self.comments), '评论'),
+                 ('images', len(self.img_links), '图片')]
         row = QHBoxLayout()
-        row.setSpacing(8)
-        for label in ('赞', '评论', '转发'):
-            btn = QPushButton(label, self)
-            btn.setObjectName('ActBtn')
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _, s=label: self._on_action(s))
-            row.addWidget(btn)
-        row.addStretch(1)
-        body.addLayout(row)
+        row.setSpacing(6)
+        shown = 0
+        for icon, count, label in stats:
+            if count <= 0:
+                continue
+            if shown:
+                dot = QLabel('·', self)
+                dot.setStyleSheet(f'color:{C_TEXT_SUB}; font-size:12px;')
+                row.addWidget(dot)
+            pm = render_svg_icon(icon, C_TEXT_SUB, 13)
+            if pm is not None:
+                ic = QLabel(self)
+                ic.setPixmap(pm)
+                row.addWidget(ic)
+                lb = QLabel(str(count), self)
+                lb.setStyleSheet(f'color:{C_TEXT_SUB}; font-size:12px;')
+                row.addWidget(lb)
+            else:
+                lb = QLabel(f'{label} {count}', self)
+                lb.setStyleSheet(f'color:{C_TEXT_SUB}; font-size:12px;')
+                row.addWidget(lb)
+            if label == '赞' and self.likers:
+                names = '、'.join(self.likers[:20])
+                if len(self.likers) > 20:
+                    names += f' 等 {len(self.likers)} 人'
+                lb.setToolTip(f'{names} 赞了')
+            shown += 1
+        if shown:
+            row.addStretch(1)
+            body.addLayout(row)
 
     # ---------- 数据加载 ----------
     @staticmethod
@@ -421,14 +530,22 @@ class MomentWidget(QFrame):
         if link.startswith('http') or link.startswith('//'):
             if link.startswith('//'):
                 link = 'https:' + link  # 协议相对链接补全
+            cell.current_key = hashlib.md5(link.encode('utf-8')).hexdigest()[:16]
             ImageLoader.instance().picture(link)
             return
         cell.setText('')
 
     def _on_image_loaded(self, key, pixmap):
-        if key.startswith('avatar:') and key == f'avatar:{self.avatar_uin}':
-            if not pixmap.isNull():
-                self.avatar.setPixmap(make_circle(pixmap, 56))
+        if key.startswith('avatar:'):
+            uin = key.split(':', 1)[1]
+            if uin == self.avatar_uin:
+                if not pixmap.isNull():
+                    self.avatar.setPixmap(make_circle(pixmap, 56))
+                return
+            # 评论者头像
+            av = self._comment_avatars.get(uin)
+            if av is not None and not pixmap.isNull():
+                av.setPixmap(make_circle(pixmap, 28))
             return
         if key.startswith('emoji:'):
             code = key.split(':', 1)[1]
@@ -443,15 +560,25 @@ class MomentWidget(QFrame):
                     break
             return
         if key.startswith('pic:'):
-            # 找到对应格子（兼容协议相对链接的两种写法）
+            # 找到对应格子（兼容协议相对链接的两种写法）；下载失败时
+            # 逐个尝试候选地址（QzoneArchive load_archived_image 思路）
             h = key.split(':', 1)[1]
             for link, cell in self._grid_cells:
-                if hashlib.md5(link.encode('utf-8')).hexdigest()[:16] == h:
-                    cell.set_pix(pixmap)
-                    break
-                if link.startswith('//') and hashlib.md5(
-                        ('https:' + link).encode('utf-8')).hexdigest()[:16] == h:
-                    cell.set_pix(pixmap)
+                hit = (hashlib.md5(link.encode('utf-8')).hexdigest()[:16] == h) or \
+                      (link.startswith('//') and hashlib.md5(
+                          ('https:' + link).encode('utf-8')).hexdigest()[:16] == h) or \
+                      (cell.current_key == h)
+                if hit:
+                    if pixmap.isNull():
+                        nxt = cell.next_candidate()
+                        if nxt:
+                            cell.current_key = hashlib.md5(
+                                nxt.encode('utf-8')).hexdigest()[:16]
+                            ImageLoader.instance().picture(nxt)
+                        else:
+                            cell.set_pix(pixmap)  # 全部候选失败 -> 默认占位图
+                    else:
+                        cell.set_pix(pixmap)
                     break
 
     # ---------- 交互 ----------
@@ -463,7 +590,3 @@ class MomentWidget(QFrame):
     def _show_photo(self, link):
         dlg = PhotoDialog(link, self)
         dlg.exec()
-
-    def _on_action(self, label):
-        # 只读数据获取工具：赞/评论/转发为界面演示，不弹提示框、不触发任何操作
-        pass

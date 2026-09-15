@@ -337,6 +337,60 @@ QLabel#StatusText {{ color: {C_TEXT_SUB}; font-size: 12px; }}
 """
 
 
+STATS_QSS = f"""
+QFrame#StatCard {{
+    background: #FFFFFF;
+    border: 1px solid {C_BORDER};
+    border-radius: 10px;
+}}
+QFrame#StatCard:hover {{ border-color: #C3D6EF; }}
+QLabel#StatCardLabel {{ color: {C_TEXT_SUB}; font-size: 11px; }}
+QLabel#StatCardValue {{ font-size: 20px; font-weight: bold; }}
+QLabel#StatCardHint {{ color: #B0BCCB; font-size: 10px; }}
+QLabel#SectionTitle {{
+    font-size: 15px;
+    font-weight: bold;
+    color: {C_TEXT};
+    padding: 2px 2px 6px 2px;
+}}
+QLabel#SectionKicker {{
+    color: {C_TEXT_SUB};
+    font-size: 11px;
+    letter-spacing: 1px;
+}}
+"""
+
+# 数据统计页 hero（回忆 / 时光感，参考 QzoneArchive 仪表盘 hero-panel）
+HERO_QSS = f"""
+QFrame#HeroPanel {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #EAF2FE, stop:0.55 #F1ECFC, stop:1 #FDF1E6);
+    border: 1px solid #E2E8F5;
+    border-radius: 14px;
+}}
+QLabel#HeroKicker {{
+    color: #8A97B5;
+    font-size: 11px;
+    letter-spacing: 2px;
+}}
+QLabel#HeroTitle {{
+    color: #2B3A55;
+    font-size: 22px;
+    font-weight: bold;
+}}
+QLabel#HeroSub {{
+    color: #6B7A99;
+    font-size: 13px;
+}}
+QLabel#HeroYears {{
+    color: #C3CDE3;
+    font-size: 42px;
+    font-weight: bold;
+}}
+"""
+
+
 def build_all_qss():
     return (GLOBAL_QSS + NAV_BAR_QSS + CARD_QSS + SIDEBAR_QSS + MOMENT_QSS
-            + POSTER_QSS + TAB_QSS + BTN_QSS + PROGRESS_QSS + LOGIN_QSS + STATUS_QSS)
+            + POSTER_QSS + TAB_QSS + BTN_QSS + PROGRESS_QSS + LOGIN_QSS
+            + STATUS_QSS + STATS_QSS + HERO_QSS)

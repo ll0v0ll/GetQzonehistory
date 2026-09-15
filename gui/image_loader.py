@@ -12,6 +12,7 @@ QNAM 的下载会阻塞 Qt 主线程事件循环（UI 卡死无响应）。reque
 import hashlib
 import os
 import re
+import time
 
 import requests
 from PyQt6.QtCore import (QObject, QRunnable, QThreadPool,
@@ -25,6 +26,36 @@ log = get_logger('image')
 
 Qt_AspectRatioMode_KeepAspectRatio = _Qt.AspectRatioMode.KeepAspectRatio
 Qt_TransformationMode_SmoothTransformation = _Qt.TransformationMode.SmoothTransformation
+
+
+def render_svg_icon(name, color, size=36):
+    """渲染 resource/icons/<name>.svg 为指定颜色的 pixmap（Font Awesome，开源免费）。
+
+    图标缺失时返回 None，调用方负责回退文本，保证界面不出现空白。
+    """
+    try:
+        path = Config.resource_path(os.path.join('icons', f'{name}.svg'))
+        if not os.path.exists(path):
+            return None
+        svg = open(path, encoding='utf-8').read()
+        if 'fill=' not in svg:
+            svg = svg.replace('<path ', f'<path fill="{color}" ')
+        else:
+            svg = re.sub(r'fill="[^"]*"', f'fill="{color}"', svg)
+        from PyQt6.QtCore import QByteArray
+        from PyQt6.QtGui import QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(QByteArray(svg.encode('utf-8')))
+        img = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(_Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        renderer.render(p)
+        p.end()
+        pm = QPixmap.fromImage(img)
+        return pm if not pm.isNull() else None
+    except Exception:
+        log.debug('SVG 图标渲染失败: %s', name, exc_info=True)
+        return None
 
 TEMP_ROOT = Config.temp_path
 AVATAR_DIR = os.path.join(TEMP_ROOT, 'avatars')
@@ -41,6 +72,7 @@ _DL_HEADERS = {
     'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                    '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'),
     'Referer': 'https://user.qzone.qq.com/',
+    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8',
 }
 
 
@@ -85,6 +117,46 @@ class _RemoteSignals(QObject):
     done = pyqtSignal(str, str, bool)   # (key, save_to, ok)
 
 
+def _valid_image_bytes(data):
+    """魔数校验下载内容是否为真实图片（对齐 QzoneArchive archived_image_extension）。
+
+    网页服务器可能返回 200 + HTML 错误页 / 验证页，必须拒绝，否则破图被缓存。
+    """
+    if not data or len(data) < 12:
+        return False
+    if data.startswith(b'\xff\xd8\xff'):
+        return True                            # jpg
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return True                            # png
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return True                            # gif
+    if data.startswith(b'BM'):
+        return True                            # bmp
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return True                            # webp
+    if data[4:8] == b'ftyp' and data[8:12] in (b'avif', b'avis', b'mif1', b'heic', b'heix'):
+        return True                            # avif/heic
+    return False
+
+
+def _is_qq_missing_placeholder(data):
+    """QQ 缺失图片占位图识别（对齐 QzoneArchive is_qq_missing_image_placeholder）。
+
+    注意：识别到的占位图**原样保存显示**——用户要求"服务器返回的失效占位图
+    就原样显示"，不当作下载失败处理（失效与否由服务器决定，本地不做二次判断）。
+    """
+    if not data or len(data) < 10:
+        return False
+    w = int.from_bytes(data[6:8], 'little')
+    h = int.from_bytes(data[8:10], 'little')
+    return ((len(data) in (2038, 2687) and data.startswith(b'GIF89a')
+             and w == 340 and h == 320)
+            or (len(data) == 1643 and data.startswith(b'GIF87a')
+                and w == 99 and h == 99)
+            or (len(data) == 1547 and data.startswith(b'GIF87a')
+                and w == 98 and h == 98))
+
+
 class _RemoteDownloadTask(QRunnable):
     """后台线程下载远程图片到本地文件（纯 requests，无 Qt 网络栈）。
 
@@ -100,17 +172,34 @@ class _RemoteDownloadTask(QRunnable):
 
     def run(self):
         try:
-            r = requests.get(self.url, headers=_DL_HEADERS,
-                             verify=False, timeout=(5, 15))
-            if r.status_code == 200 and r.content:
+            # 超大超时 + 失败重试 1 次：老图片/CDN 慢，瞬时网络抖动不应判死
+            last = None
+            for attempt in (1, 2):
                 try:
-                    with open(self.save_to, 'wb') as f:
-                        f.write(r.content)
+                    r = requests.get(self.url, headers=_DL_HEADERS,
+                                     verify=False, timeout=(8, 30))
+                    if r.status_code == 200 and r.content:
+                        if not _valid_image_bytes(r.content):
+                            # 200 但内容不是图片（HTML 错误页/风控页等）
+                            log.warning('下载内容非图片（HTTP %s, %d bytes），拒绝缓存: %s',
+                                        r.status_code, len(r.content), self.url[:120])
+                            self.signals.done.emit(self.key, self.save_to, False)
+                            return
+                        try:
+                            with open(self.save_to, 'wb') as f:
+                                f.write(r.content)
+                        except Exception as e:
+                            log.warning('保存远程图片失败 %s: %s', self.save_to, e)
+                        self.signals.done.emit(self.key, self.save_to, True)
+                        return
+                    # 非 200（404/403/50x 等）：重试一次后仍失败再放弃
+                    last = f'HTTP {r.status_code}'
                 except Exception as e:
-                    log.warning('保存远程图片失败 %s: %s', self.save_to, e)
-                self.signals.done.emit(self.key, self.save_to, True)
-                return
-            log.warning('远程下载状态异常 %s: HTTP %s', self.url, r.status_code)
+                    last = str(e)
+                if attempt == 1:
+                    log.warning('远程下载第 1 次失败（%s），重试: %s', last, self.url[:120])
+                    time.sleep(0.6)
+            log.warning('远程下载失败 %s: %s', self.url[:120], last)
         except Exception as e:
             log.warning('远程下载失败 %s: %s', self.url, e)
         self.signals.done.emit(self.key, self.save_to, False)
