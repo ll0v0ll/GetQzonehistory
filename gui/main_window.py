@@ -469,12 +469,41 @@ class MainWindow(QMainWindow):
         if idx is not None:
             self._menu_group.button(idx).setChecked(True)
 
+    @staticmethod
+    def _wipe_layout(lay):
+        """递归销毁 layout 内所有子项（widget / 子 layout / spacer）。
+
+        统计页用 insertLayout 插入的 QHBoxLayout 项，若只 takeAt 不销毁，
+        其中 widget 仍挂在布局上继续渲染，反复切换导航会叠加出重复内容。
+        """
+        if lay is None:
+            return
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)      # 立即脱离可见树（不依赖事件循环）
+                w.deleteLater()
+                continue
+            sub = item.layout()
+            if sub is not None:
+                self._wipe_layout(sub)
+                sub.setParent(None)
+                sub.deleteLater()
+
     def _clear_flow(self):
         while self.flow_layout.count() > 1:  # 保留底部 stretch
             item = self.flow_layout.takeAt(0)
             w = item.widget()
-            if w:
+            if w is not None:
+                w.setParent(None)
                 w.deleteLater()
+                continue
+            sub = item.layout()
+            if sub is not None:
+                self._wipe_layout(sub)
+                sub.setParent(None)
+                sub.deleteLater()
         self._pending_moments = []
         self._rendered = 0
 
