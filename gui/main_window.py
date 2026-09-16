@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
         mlay.setSpacing(4)
         self._menu_group = QButtonGroup(self)
         self._menu_group.setExclusive(True)
-        for i, (name, tab) in enumerate((('我的说说', '全部'), ('全部动态', '全部'),
+        for i, (name, tab) in enumerate((('我的说说', '全部'),
                                          ('数据统计', '统计'))):
             b = QPushButton(name, menu)
             b.setObjectName('MenuBtn')
@@ -464,7 +464,7 @@ class MainWindow(QMainWindow):
         self._render_moments(self.tab_data.get(name, []))
 
     def _set_menu_checked(self, tab):
-        mapping = {'全部': 0, '我的说说': 0, '统计': 2}
+        mapping = {'全部': 0, '我的说说': 0, '统计': 1}
         idx = mapping.get(tab)
         if idx is not None:
             self._menu_group.button(idx).setChecked(True)
