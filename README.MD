@@ -47,7 +47,7 @@
 
 1. **历史消息列表**（feeds2_html_pav_all）：早期全部历史消息
 2. **全部可见说说**（emotion_cgi_msglist_v6）：未删除说说，含图片/视频/评论/来源客户端
-3. **动态流增强通道**（mobile get_feeds，参考 [QzoneArchive](https://github.com/ehre/QzoneArchive)）：动态流 JSON，补充评论楼中楼回复、点赞数、转发原文信息
+3. **动态流增强通道**（mobile get_feeds，参考 [QzoneArchive](https://github.com/Gaoshu705/QzoneArchive)）：动态流 JSON，补充评论楼中楼回复、点赞数、转发原文信息
 
 动态流通道借鉴了 QzoneArchive 的 **事件建模**
 
