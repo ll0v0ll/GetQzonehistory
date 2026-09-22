@@ -72,7 +72,7 @@ def main():
             return 0
         cookies = dlg.result_cookies
         uin = service._clean_uin(cookies.get('uin'))
-        if not uin:
+        if not uin or uin == 'None':
             log.warning('登录信息中未解析出 QQ 号')
             QMessageBox.warning(None, '登录失败', '未能从登录信息中解析出 QQ 号，请重新登录。')
             continue

@@ -93,6 +93,10 @@ class QzoneService:
     def save_cookie(self, cookies):
         """保存登录 cookie，文件名统一用纯数字 QQ 号。"""
         qq = self._clean_uin(cookies.get('uin'))
+        if not qq or qq == 'None':
+            # 防御：登录 cookie 偶发缺 uin 时拒绝保存，避免生成 'None' 账号文件
+            log.warning('登录 cookie 缺少有效 uin，拒绝保存')
+            return
         with open(os.path.join(Config.user_path, qq), 'w', encoding='utf-8') as f:
             f.write(str(cookies))
         log.info('登录信息已保存: QQ=%s', qq)
@@ -149,9 +153,24 @@ class QzoneService:
         if '二维码已失效' in text:
             return 'expired', None
         if '登录成功' in text:
-            cookies = requests.utils.dict_from_cookiejar(r.cookies)
-            uin = cookies.get('uin')
-            sigx = re.findall(r'ptsigx=(.*?)&', text)[0]
+            # 对齐 QzoneArchive qlogin.rs：全程累积合并 cookie，而不是只取
+            # check_sig 302 响应的 Set-Cookie（偶发缺失 uin/p_skey 会导致
+            # 保存出 "None" QQ 号、登录态校验失败 → 误报"退出登录"）
+            step1 = requests.utils.dict_from_cookiejar(r.cookies)   # ptqrlogin 响应
+            uin = step1.get('uin')
+            # 宽松提取 ptsigx（参考 QzoneArchive callback_query_value）：
+            # 支持 ?uin= / &uin= / 'uin= 三种前导，值截止到 & 或 '，避免偶发解析失败
+            m_sigx = re.search(r"(?:[?&]|')ptsigx=([^&']+)", text)
+            if not m_sigx:
+                return 'error', '登录响应中缺少 ptsigx'
+            sigx = m_sigx.group(1)
+            # ptqrlogin cookie 偶发缺 uin 时，先从回调文本提取（uin=o01941163264）
+            if not uin:
+                m_uin = re.search(r"(?:[?&]|')uin=([0-9a-zA-Z]+)", text)
+                if m_uin:
+                    uin = m_uin.group(1)
+            if not uin:
+                return 'error', '登录响应中缺少 uin'
             url = ('https://ptlogin2.qzone.qq.com/check_sig?pttype=1&uin=' + uin +
                    '&service=ptqrlogin&nodirect=0&ptsigx=' + sigx +
                    '&s_url=https%3A%2F%2Fqzs.qq.com%2Fqzone%2Fv5%2Floginsucc.html%3Fpara%3Dizone'
@@ -159,13 +178,27 @@ class QzoneService:
                    '&low_login_hour=0&regmaster=0&pt_login_type=3&pt_aid=0&pt_aaid=16'
                    '&pt_light=0&pt_3rd_aid=0')
             try:
-                r = self.session.get(url, cookies=cookies, allow_redirects=False, verify=False, timeout=(10, 30))
-                target_cookies = requests.utils.dict_from_cookiejar(r.cookies)
-                self.save_cookie(target_cookies)
-                log.info('扫码登录成功，uin=%s', target_cookies.get('uin'))
-                return 'success', target_cookies
+                r = self.session.get(url, cookies=step1, allow_redirects=False, verify=False, timeout=(10, 30))
             except Exception as e:
                 return 'error', str(e)
+            merged = dict(step1)
+            for k, v in requests.utils.dict_from_cookiejar(r.cookies).items():
+                if v and str(v).strip():
+                    merged[k] = v          # 后响应优先，跳过空值（清理型 Set-Cookie）
+            # 登录成功前校验关键凭据，缺则明确报错而不是"假成功"
+            p_skey = merged.get('p_skey')
+            if not p_skey or not str(p_skey).strip():
+                return 'error', '登录 Cookie 缺少有效的 p_skey'
+            if not merged.get('uin') or not self._clean_uin(merged.get('uin')):
+                # 兜底：从 ptuiCB 回调文本里的 uin=o01941163264 提取（参考项目做法）
+                m = re.search(r"(?:[?&]|')uin=([0-9a-zA-Z]+)", text)
+                if m:
+                    merged['uin'] = m.group(1)
+                else:
+                    return 'error', '登录响应中缺少 uin'
+            self.save_cookie(merged)
+            log.info('扫码登录成功，uin=%s', merged.get('uin'))
+            return 'success', merged
         return 'cancel', None
 
     # ---------- 用户信息 ----------
